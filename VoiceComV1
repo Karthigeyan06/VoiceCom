@@ -1,0 +1,89 @@
+#include <SPI.h>
+#include <nRF24L01.h>
+#include <RF24.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+
+#define CE_PIN 7
+#define CSN_PIN 8
+#define MIC_PIN A0
+#define AUDIO_OUT_PIN 4
+#define BUTTON_AUDIO_MODE 5
+#define BUTTON_GPS 6
+
+RF24 radio(CE_PIN, CSN_PIN);
+const byte address[6] = "00001";
+
+TinyGPSPlus gps;
+SoftwareSerial gpsSerial(2, 3); // RX, TX for GPS
+
+bool inTransmitMode = false;
+bool gpsTransmit = false;
+
+void setup() {
+  Serial.begin(9600);
+  gpsSerial.begin(9600);
+
+  pinMode(BUTTON_AUDIO_MODE, INPUT_PULLUP);
+  pinMode(BUTTON_GPS, INPUT_PULLUP);
+  pinMode(AUDIO_OUT_PIN, OUTPUT);
+
+  radio.begin();
+  radio.openReadingPipe(0, address);
+  radio.setPALevel(RF24_PA_LOW);
+  radio.startListening();
+}
+
+void loop() {
+  if (digitalRead(BUTTON_AUDIO_MODE) == LOW) {
+    inTransmitMode = !inTransmitMode;
+    delay(300); // Debounce delay
+  }
+
+  if (digitalRead(BUTTON_GPS) == LOW) {
+    gpsTransmit = true;
+    delay(300); // Debounce delay
+  }
+
+  if (inTransmitMode) {
+    radio.stopListening();
+    transmitMicData();
+  } else {
+    receiveAudioData();
+  }
+
+  if (gpsTransmit) {
+    transmitGPSData();
+    gpsTransmit = false;
+  }
+}
+
+void transmitMicData() {
+  int micValue = analogRead(MIC_PIN);
+  radio.write(&micValue, sizeof(micValue));
+}
+
+void receiveAudioData() {
+  if (radio.available()) {
+    int audioSignal;
+    radio.read(&audioSignal, sizeof(audioSignal));
+    analogWrite(AUDIO_OUT_PIN, audioSignal);
+  }
+}
+
+void transmitGPSData() {
+  unsigned long start = millis();
+  while (millis() - start < 5000) {
+    while (gpsSerial.available() > 0) {
+      gps.encode(gpsSerial.read());
+    }
+    if (gps.location.isUpdated()) {
+      float latitude = gps.location.lat();
+      float longitude = gps.location.lng();
+      radio.stopListening();
+      radio.write(&latitude, sizeof(latitude));
+      radio.write(&longitude, sizeof(longitude));
+      radio.startListening();
+    }
+  }
+}
